@@ -1,13 +1,18 @@
 using System;
 
-public class AesManual
+public class AesAlgorithm
 {
-    private const int Nb = 4;
-    private readonly int Nk;
-    private readonly int Nr;
+    
+    private const int AESstate = 4;
+
+    private readonly int AESwords;
+
+    private readonly int AESround;
+
     private readonly byte[] expandedKey;
 
-    private static readonly byte[] SBox =
+
+    private static readonly byte[] SubstitutionBox =
     {
         0x63,0x7c,0x77,0x7b,0xf2,0x6b,0x6f,0xc5,
         0x30,0x01,0x67,0x2b,0xfe,0xd7,0xab,0x76,
@@ -43,7 +48,8 @@ public class AesManual
         0x41,0x99,0x2d,0x0f,0xb0,0x54,0xbb,0x16
     };
 
-    private static readonly byte[] InvSBox =
+
+    private static readonly byte[] InverseSubstitutionBox =
     {
         0x52,0x09,0x6a,0xd5,0x30,0x36,0xa5,0x38,
         0xbf,0x40,0xa3,0x9e,0x81,0xf3,0xd7,0xfb,
@@ -79,7 +85,7 @@ public class AesManual
         0xe1,0x69,0x14,0x63,0x55,0x21,0x0c,0x7d
     };
 
-   
+
     private static byte GAdd(byte a, byte b)
     {
         return (byte)(a ^ b);
@@ -91,77 +97,87 @@ public class AesManual
         return (byte)(a ^ b);
     }
 
-  
-    private static byte GMult(byte a, byte b)
+
+    private static byte GMul(byte a, byte b)
     {
-        byte p = 0;
+        byte product = 0;
 
         for (int i = 0; i < 8; i++)
         {
             if ((b & 1) != 0)
-                p ^= a;
+                product ^= a;
 
-            bool highBit = (a & 0x80) != 0;
+            bool highestBitSet = (a & 0x80) != 0;
 
-            a = (byte)(a << 1);
+            a <<= 1;
 
-            if (highBit)
+            if (highestBitSet)
                 a ^= 0x1B;
 
             b >>= 1;
         }
 
-        return p;
+        return product;
     }
 
-    private static byte[] CoefAdd(byte[] a, byte[] b)
+
+    private static byte[] CoefficientAdd(
+        byte[] a,
+        byte[] b)
     {
-        return new byte[]
+        byte[] result = new byte[4];
+
+        for (int i = 0; i < 4; i++)
+            result[i] = (byte)(a[i] ^ b[i]);
+
+        return result;
+    }
+
+
+    private static byte[] CoefficientMult(
+        byte[] a,
+        byte[] b)
+    {
+        byte[] result = new byte[4];
+
+        result[0] = (byte)(
+            GMul(a[0], b[0]) ^
+            GMul(a[3], b[1]) ^
+            GMul(a[2], b[2]) ^
+            GMul(a[1], b[3])
+        );
+
+        result[1] = (byte)(
+            GMul(a[1], b[0]) ^
+            GMul(a[0], b[1]) ^
+            GMul(a[3], b[2]) ^
+            GMul(a[2], b[3])
+        );
+
+        result[2] = (byte)(
+            GMul(a[2], b[0]) ^
+            GMul(a[1], b[1]) ^
+            GMul(a[0], b[2]) ^
+            GMul(a[3], b[3])
+        );
+
+        result[3] = (byte)(
+            GMul(a[3], b[0]) ^
+            GMul(a[2], b[1]) ^
+            GMul(a[1], b[2]) ^
+            GMul(a[0], b[3])
+        );
+
+        return result;
+    }
+
+
+    private static byte[] RoundConstant(byte i)
+    {
+        byte[] result =
         {
-            GAdd(a[0], b[0]),
-            GAdd(a[1], b[1]),
-            GAdd(a[2], b[2]),
-            GAdd(a[3], b[3])
+            0x02, 0x00, 0x00, 0x00
         };
-    }
-
-    private static byte[] CoefMult(byte[] a, byte[] b)
-    {
-        return new byte[]
-        {
-            (byte)(
-                GMult(a[0], b[0]) ^
-                GMult(a[3], b[1]) ^
-                GMult(a[2], b[2]) ^
-                GMult(a[1], b[3])
-            ),
-
-            (byte)(
-                GMult(a[1], b[0]) ^
-                GMult(a[0], b[1]) ^
-                GMult(a[3], b[2]) ^
-                GMult(a[2], b[3])
-            ),
-
-            (byte)(
-                GMult(a[2], b[0]) ^
-                GMult(a[1], b[1]) ^
-                GMult(a[0], b[2]) ^
-                GMult(a[3], b[3])
-            ),
-
-            (byte)(
-                GMult(a[3], b[0]) ^
-                GMult(a[2], b[1]) ^
-                GMult(a[1], b[2]) ^
-                GMult(a[0], b[3])
-            )
-        };
-    }
-
-    private static byte[] Rcon(byte i)
-    {
-        byte[] result = { 0x02, 0x00, 0x00, 0x00 };
 
         if (i == 1)
         {
@@ -169,11 +185,13 @@ public class AesManual
         }
         else if (i > 1)
         {
+            result[0] = 0x02;
+
             i--;
 
             while (i > 1)
             {
-                result[0] = GMult(result[0], 0x02);
+                result[0] = GMul(result[0], 0x02);
                 i--;
             }
         }
@@ -181,7 +199,232 @@ public class AesManual
         return result;
     }
 
-    public AesManual(byte[] key)
+
+    private static void AddRoundKey(
+        byte[] state,
+        byte[] expandedKey,
+        int round)
+    {
+        for (int column = 0; column < AESstate; column++)
+        {
+            state[AESstate * 0 + column] ^=
+                expandedKey[4 * AESstate * round + 4 * column + 0];
+
+            state[AESstate * 1 + column] ^=
+                expandedKey[4 * AESstate * round + 4 * column + 1];
+
+            state[AESstate * 2 + column] ^=
+                expandedKey[4 * AESstate * round + 4 * column + 2];
+
+            state[AESstate * 3 + column] ^=
+                expandedKey[4 * AESstate * round + 4 * column + 3];
+        }
+    }
+
+
+    private static void MixColumns(byte[] state)
+    {
+        byte[] a =
+        {
+            0x02, 0x01, 0x01, 0x03
+        };
+
+        for (int column = 0; column < AESstate; column++)
+        {
+            byte[] currentColumn =
+            {
+                state[0 * AESstate + column],
+                state[1 * AESstate + column],
+                state[2 * AESstate + column],
+                state[3 * AESstate + column]
+            };
+
+            byte[] result =
+                CoefficientMult(a, currentColumn);
+
+            for (int row = 0; row < 4; row++)
+                state[row * AESstate + column] = result[row];
+        }
+    }
+
+
+    private static void InvMixColumns(byte[] state)
+    {
+        byte[] matrix =
+        {
+            0x0E, 0x09, 0x0D, 0x0B
+        };
+
+        for (int column = 0; column < AESstate; column++)
+        {
+            byte[] currentColumn =
+            {
+                state[0 * AESstate + column],
+                state[1 * AESstate + column],
+                state[2 * AESstate + column],
+                state[3 * AESstate + column]
+            };
+
+            byte[] result =
+                CoefficientMult(matrix, currentColumn);
+
+            for (int row = 0; row < 4; row++)
+                state[row * AESstate + column] = result[row];
+        }
+    }
+
+
+    private static void ShiftRows(byte[] state)
+    {
+        for (int row = 1; row < 4; row++)
+        {
+            for (int shift = 0; shift < row; shift++)
+            {
+                byte temp =
+                    state[row * AESstate];
+
+                for (int column = 1; column < AESstate; column++)
+                {
+                    state[row * AESstate + column - 1] =
+                        state[row * AESstate + column];
+                }
+
+                state[row * AESstate + AESstate - 1] =
+                    temp;
+            }
+        }
+    }
+
+
+    private static void InvShiftRows(byte[] state)
+    {
+        for (int row = 1; row < 4; row++)
+        {
+            for (int shift = 0; shift < row; shift++)
+            {
+                byte temp =
+                    state[row * AESstate + AESstate - 1];
+
+                for (int column = AESstate - 1;
+                     column > 0;
+                     column--)
+                {
+                    state[row * AESstate + column] =
+                        state[row * AESstate + column - 1];
+                }
+
+                state[row * AESstate] = temp;
+            }
+        }
+    }
+
+
+    private static void SubBytes(byte[] state)
+    {
+        for (int i = 0; i < state.Length; i++)
+            state[i] = SubstitutionBox[state[i]];
+    }
+
+
+    private static void InvSubBytes(byte[] state)
+    {
+        for (int i = 0; i < state.Length; i++)
+            state[i] = InverseSubstitutionBox[state[i]];
+    }
+
+
+    private static void SubWord(byte[] word)
+    {
+        for (int i = 0; i < 4; i++)
+            word[i] = SubstitutionBox[word[i]];
+    }
+
+
+    private static void RotWord(byte[] word)
+    {
+        byte temp = word[0];
+
+        word[0] = word[1];
+        word[1] = word[2];
+        word[2] = word[3];
+        word[3] = temp;
+    }
+
+
+    private byte[] KeyExpansion(byte[] key)
+    {
+        int totalWords =
+            AESstate * (AESround + 1);
+
+        byte[] expandedKey =
+            new byte[totalWords * 4];
+
+        // Copy original key
+        for (int i = 0; i < AESwords; i++)
+        {
+            expandedKey[4 * i] =
+                key[4 * i];
+
+            expandedKey[4 * i + 1] =
+                key[4 * i + 1];
+
+            expandedKey[4 * i + 2] =
+                key[4 * i + 2];
+
+            expandedKey[4 * i + 3] =
+                key[4 * i + 3];
+        }
+
+
+        for (int i = AESwords; i < totalWords; i++)
+        {
+            byte[] temp =
+            {
+                expandedKey[4 * (i - 1)],
+                expandedKey[4 * (i - 1) + 1],
+                expandedKey[4 * (i - 1) + 2],
+                expandedKey[4 * (i - 1) + 3]
+            };
+
+
+            if (i % AESwords == 0)
+            {
+                RotWord(temp);
+                SubWord(temp);
+
+                byte[] roundConstant =
+                    RoundConstant(
+                        (byte)(i / AESwords)
+                    );
+
+                temp =
+                    CoefficientAdd(
+                        temp,
+                        roundConstant
+                    );
+            }
+            else if (AESwords > 6 && i % AESwords == 4)
+            {
+                SubWord(temp);
+            }
+
+
+            for (int j = 0; j < 4; j++)
+            {
+                expandedKey[4 * i + j] =
+                    (byte)(
+                        expandedKey[
+                            4 * (i - AESwords) + j
+                        ] ^ temp[j]
+                    );
+            }
+        }
+
+        return expandedKey;
+    }
+
+
+    public AesAlgorithm(byte[] key)
     {
         if (key == null)
             throw new ArgumentNullException(nameof(key));
@@ -195,191 +438,27 @@ public class AesManual
             );
         }
 
+
         if (key.Length == 16)
         {
-            Nk = 4;
-            Nr = 10;
+            AESwords = 4;
+            AESround = 10;
         }
         else if (key.Length == 24)
         {
-            Nk = 6;
-            Nr = 12;
+            AESwords = 6;
+            AESround = 12;
         }
         else
         {
-            Nk = 8;
-            Nr = 14;
+            AESwords = 8;
+            AESround = 14;
         }
+
 
         expandedKey = KeyExpansion(key);
     }
 
-    private void AddRoundKey(byte[] state, int round)
-    {
-        for (int c = 0; c < Nb; c++)
-        {
-            state[0 * Nb + c] ^= expandedKey[4 * Nb * round + 4 * c + 0];
-            state[1 * Nb + c] ^= expandedKey[4 * Nb * round + 4 * c + 1];
-            state[2 * Nb + c] ^= expandedKey[4 * Nb * round + 4 * c + 2];
-            state[3 * Nb + c] ^= expandedKey[4 * Nb * round + 4 * c + 3];
-        }
-    }
-
-    private static void MixColumns(byte[] state)
-    {
-        byte[] matrix = { 0x02, 0x01, 0x01, 0x03 };
-
-        for (int column = 0; column < Nb; column++)
-        {
-            byte[] current =
-            {
-                state[0 * Nb + column],
-                state[1 * Nb + column],
-                state[2 * Nb + column],
-                state[3 * Nb + column]
-            };
-
-            byte[] result = CoefMult(matrix, current);
-
-            for (int row = 0; row < 4; row++)
-                state[row * Nb + column] = result[row];
-        }
-    }
-
-    private static void InvMixColumns(byte[] state)
-    {
-        byte[] matrix = { 0x0E, 0x09, 0x0D, 0x0B };
-
-        for (int column = 0; column < Nb; column++)
-        {
-            byte[] current =
-            {
-                state[0 * Nb + column],
-                state[1 * Nb + column],
-                state[2 * Nb + column],
-                state[3 * Nb + column]
-            };
-
-            byte[] result = CoefMult(matrix, current);
-
-            for (int row = 0; row < 4; row++)
-                state[row * Nb + column] = result[row];
-        }
-    }
-
-    private static void ShiftRows(byte[] state)
-    {
-        for (int row = 1; row < 4; row++)
-        {
-            for (int shift = 0; shift < row; shift++)
-            {
-                byte temp = state[row * Nb];
-
-                for (int column = 1; column < Nb; column++)
-                {
-                    state[row * Nb + column - 1] =
-                        state[row * Nb + column];
-                }
-
-                state[row * Nb + Nb - 1] = temp;
-            }
-        }
-    }
-
-    private static void InvShiftRows(byte[] state)
-    {
-        for (int row = 1; row < 4; row++)
-        {
-            for (int shift = 0; shift < row; shift++)
-            {
-                byte temp = state[row * Nb + Nb - 1];
-
-                for (int column = Nb - 1; column > 0; column--)
-                {
-                    state[row * Nb + column] =
-                        state[row * Nb + column - 1];
-                }
-
-                state[row * Nb] = temp;
-            }
-        }
-    }
-
-    private static void SubBytes(byte[] state)
-    {
-        for (int i = 0; i < state.Length; i++)
-            state[i] = SBox[state[i]];
-    }
-
-    private static void InvSubBytes(byte[] state)
-    {
-        for (int i = 0; i < state.Length; i++)
-            state[i] = InvSBox[state[i]];
-    }
-
-    private static void SubWord(byte[] word)
-    {
-        for (int i = 0; i < 4; i++)
-            word[i] = SBox[word[i]];
-    }
-
-    private static void RotWord(byte[] word)
-    {
-        byte temp = word[0];
-
-        word[0] = word[1];
-        word[1] = word[2];
-        word[2] = word[3];
-        word[3] = temp;
-    }
-
-    private byte[] KeyExpansion(byte[] key)
-    {
-        int totalWords = Nb * (Nr + 1);
-
-        byte[] w = new byte[totalWords * 4];
-
-        for (int i = 0; i < Nk; i++)
-        {
-            w[4 * i] = key[4 * i];
-            w[4 * i + 1] = key[4 * i + 1];
-            w[4 * i + 2] = key[4 * i + 2];
-            w[4 * i + 3] = key[4 * i + 3];
-        }
-
-        for (int i = Nk; i < totalWords; i++)
-        {
-            byte[] temp =
-            {
-                w[4 * (i - 1)],
-                w[4 * (i - 1) + 1],
-                w[4 * (i - 1) + 2],
-                w[4 * (i - 1) + 3]
-            };
-
-            if (i % Nk == 0)
-            {
-                RotWord(temp);
-                SubWord(temp);
-
-                byte[] rcon = Rcon((byte)(i / Nk));
-
-                temp = CoefAdd(temp, rcon);
-            }
-            else if (Nk > 6 && i % Nk == 4)
-            {
-                SubWord(temp);
-            }
-
-            for (int j = 0; j < 4; j++)
-            {
-                w[4 * i + j] =
-                    (byte)(w[4 * (i - Nk) + j] ^ temp[j]);
-            }
-        }
-
-        return w;
-    }
 
     public byte[] EncryptBlock(byte[] input)
     {
@@ -393,46 +472,66 @@ public class AesManual
 
         byte[] state = new byte[16];
 
-        
+
         for (int row = 0; row < 4; row++)
         {
             for (int column = 0; column < 4; column++)
             {
-                state[row * Nb + column] =
+                state[row * AESstate + column] =
                     input[row + 4 * column];
             }
         }
 
-       
-        AddRoundKey(state, 0);
 
-        for (int round = 1; round < Nr; round++)
+        AddRoundKey(
+            state,
+            expandedKey,
+            0
+        );
+
+
+        for (int round = 1;
+             round < AESround;
+             round++)
         {
             SubBytes(state);
             ShiftRows(state);
             MixColumns(state);
-            AddRoundKey(state, round);
+
+            AddRoundKey(
+                state,
+                expandedKey,
+                round
+            );
         }
 
-      
+
         SubBytes(state);
         ShiftRows(state);
-        AddRoundKey(state, Nr);
 
-        
+        AddRoundKey(
+            state,
+            expandedKey,
+            AESround
+        );
+
+
         byte[] output = new byte[16];
+
 
         for (int row = 0; row < 4; row++)
         {
             for (int column = 0; column < 4; column++)
             {
                 output[row + 4 * column] =
-                    state[row * Nb + column];
+                    state[row * AESstate + column];
             }
         }
 
+
         return output;
     }
+
 
     public byte[] DecryptBlock(byte[] input)
     {
@@ -446,43 +545,67 @@ public class AesManual
 
         byte[] state = new byte[16];
 
+
         for (int row = 0; row < 4; row++)
         {
             for (int column = 0; column < 4; column++)
             {
-                state[row * Nb + column] =
+                state[row * AESstate + column] =
                     input[row + 4 * column];
             }
         }
 
-        
-        AddRoundKey(state, Nr);
 
-        for (int round = Nr - 1; round >= 1; round--)
+        AddRoundKey(
+            state,
+            expandedKey,
+            AESround
+        );
+
+
+        for (int round = AESround - 1;
+             round >= 1;
+             round--)
         {
             InvShiftRows(state);
             InvSubBytes(state);
-            AddRoundKey(state, round);
+
+            AddRoundKey(
+                state,
+                expandedKey,
+                round
+            );
+
             InvMixColumns(state);
         }
 
+
         InvShiftRows(state);
         InvSubBytes(state);
-        AddRoundKey(state, 0);
+
+        AddRoundKey(
+            state,
+            expandedKey,
+            0
+        );
+
 
         byte[] output = new byte[16];
+
 
         for (int row = 0; row < 4; row++)
         {
             for (int column = 0; column < 4; column++)
             {
                 output[row + 4 * column] =
-                    state[row * Nb + column];
+                    state[row * AESstate + column];
             }
         }
 
+
         return output;
     }
+
 
     public static byte[] HexToBytes(string hex)
     {
@@ -494,18 +617,21 @@ public class AesManual
                 "Hex string must have an even number of characters."
             );
 
-        byte[] result = new byte[hex.Length / 2];
+        byte[] result =
+            new byte[hex.Length / 2];
 
         for (int i = 0; i < result.Length; i++)
         {
-            result[i] = Convert.ToByte(
-                hex.Substring(i * 2, 2),
-                16
-            );
+            result[i] =
+                Convert.ToByte(
+                    hex.Substring(i * 2, 2),
+                    16
+                );
         }
 
         return result;
     }
+
 
     public static string BytesToHex(byte[] data)
     {
@@ -515,23 +641,31 @@ public class AesManual
 
 
 
-byte[] key = AesManual.HexToBytes(
+
+byte[] key = AesAlgorithm.HexToBytes(
     "000102030405060708090A0B0C0D0E0F"
 );
 
-byte[] plaintext = AesManual.HexToBytes(
+byte[] plaintext = AesAlgorithm.HexToBytes(
     "00112233445566778899AABBCCDDEEFF"
 );
 
-AesManual aes = new AesManual(key);
+AesAlgorithm aes =
+    new AesAlgorithm(key);
 
-byte[] encrypted = aes.EncryptBlock(plaintext);
+byte[] encrypted =
+    aes.EncryptBlock(plaintext);
 
 Console.WriteLine("Encrypted:");
-Console.WriteLine(AesManual.BytesToHex(encrypted));
+Console.WriteLine(
+    AesAlgorithm.BytesToHex(encrypted)
+);
 
-byte[] decrypted = aes.DecryptBlock(encrypted);
+byte[] decrypted =
+    aes.DecryptBlock(encrypted);
 
 Console.WriteLine();
 Console.WriteLine("Decrypted:");
-Console.WriteLine(AesManual.BytesToHex(decrypted));
+Console.WriteLine(
+    AesAlgorithm.BytesToHex(decrypted)
+);
